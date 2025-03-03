@@ -1,0 +1,103 @@
+pragma language_version >= 0.14.0;
+
+module Crypto {
+  import CompactStandardLibrary;
+
+  circuit point_to_bytes(p: CurvePoint): Bytes<32> {
+    return persistent_hash<CurvePoint>(p);
+  }
+
+  struct Bytes96 {
+    b0: Bytes<32>;
+    b1: Bytes<32>;
+    b2: Bytes<32>;
+  }
+
+  struct Bytes64 {
+    b0: Bytes<32>;
+    b1: Bytes<32>;
+  }
+
+  export struct Signature {
+    pk: CurvePoint;
+    R: CurvePoint;
+    s: Field;
+  }
+
+  // Could be used as a credential subject as defined in https://w3c-ccg.github.io/vc-data-model/#credential-subject
+  // We need a standard for a canonical representation of a credential subject, so we can hash it consistently
+  export struct CredentialSubject {
+      id: Bytes<32>; // The id of the subject (midnight wallet own_public_key)
+      first_name: Bytes<32>; // The first name of the subject
+      last_name: Bytes<32>; // The last name of the subject
+      national_identifier: Bytes<32>; // The national identifier of the subject
+      birth_timestamp: Uint<64>; // The birth timestamp of the subject
+  }
+
+  export struct SignedCredentialSubject {
+    subject: CredentialSubject;
+    signature: Signature;
+  }
+
+  export pure circuit subject_hash(credentialSubject: CredentialSubject): Bytes<32> {
+    return persistent_hash<CredentialSubject>(credentialSubject);
+  }
+
+  export pure circuit derive_pk(sk_bytes: Bytes<32>): CurvePoint {
+     const sk: Field = 0; //transient_hash<Bytes<32>>(sk_bytes);
+     const pk: CurvePoint = ec_mul_generator(sk);
+     return pk;
+  }
+
+  export pure circuit sign(msg: Bytes<32>, sk_bytes: Bytes<32>): Signature {
+    // Convert sk_bytes to Field
+    const sk: Field = transient_hash<Bytes<32>>(sk_bytes);
+    // Compute public key: pk = sk * B
+    const pk: CurvePoint = ec_mul_generator(sk);
+
+    // Derive nonce k deterministically: k = H(sk_bytes || msg)
+    const nonce_input: Bytes64 = Bytes64 { b0: sk_bytes, b1: msg };
+    const k: Field = transient_hash<Bytes64>(nonce_input); // Hash to scalar
+
+    // Compute R = k * B
+    const R: CurvePoint = ec_mul_generator(k);
+
+    // Compute challenge: c = H(R || pk || msg)
+    const R_bytes: Bytes<32> = point_to_bytes(R);
+    const pk_bytes: Bytes<32> = point_to_bytes(pk);
+    const c_bytes: Bytes96 = Bytes96 {
+      b0: R_bytes,
+      b1: pk_bytes,
+      b2: msg
+    };
+    const c: Field = transient_hash<Bytes96>(c_bytes);
+
+    // Compute signature: s = k + c * sk
+    const s: Field = k + (c * sk);
+
+    return Signature { pk: pk, R: R, s: s };
+  }
+
+  export pure circuit verify_signature(msg: Bytes<32>, signature: Signature): [] {
+    const {pk, R, s} = signature;
+    // Compute challenge: c = H(R || pk || msg)
+    const R_bytes: Bytes<32> = point_to_bytes(R);
+    const pk_bytes: Bytes<32> = point_to_bytes(pk);
+    const c_bytes: Bytes96 = Bytes96 {
+      b0: R_bytes,
+      b1: pk_bytes,
+      b2: msg
+    };
+    const c: Field = transient_hash<Bytes96>(c_bytes);
+
+    // Left-hand side: s * B
+    const lhs: CurvePoint = ec_mul_generator(s);
+
+    // Right-hand side: R + c * pk
+    const c_pk: CurvePoint = ec_mul(pk, c);
+    const rhs: CurvePoint = ec_add(R, c_pk);
+
+    // Enforce verification equation
+    assert lhs == rhs "Signature verification failed";
+  }
+}

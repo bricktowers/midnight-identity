@@ -1,0 +1,52 @@
+pragma language_version >= 0.14.0;
+
+import CompactStandardLibrary;
+import "../../crypto/Crypto";
+
+export { CoinInfo }
+export { SignedCredentialSubject }
+
+export struct Order {
+    id: Bytes<16>; // The UUID of the order
+    user_wallet_pk: Bytes<32>; // The public key of the user wallet
+    timestamp: Uint<64>; // The timestamp of the order
+    items: Vector<100, Bytes<16>>; // The items of the order
+    payment: CoinInfo; // The coin info of the order total amount that will be paid
+}
+
+export sealed ledger expected_coin_color: Bytes<32>;
+export ledger store_owner_public_key: ZswapCoinPublicKey;
+export ledger trusted_issuer_public_key: CurvePoint;
+export ledger available_items: Map<Bytes<16>, Uint<32>>; // Item UUID -> price in tBTC
+
+witness get_order(id: Bytes<16>): Order; // Retrieve the order details privately
+witness get_identity(): SignedCredentialSubject; // Retrieve the identity details privately
+
+constructor(_trusted_issuer_public_key: CurvePoint, token_address: ContractAddress) {
+  // Setup the available items
+  available_items.insert("0000000000000000", 0);
+  available_items.insert("0000000000000001", 2);
+  available_items.insert("0000000000000002", 5);
+  available_items.insert("0000000000000003", 12);
+
+  // Setup the public keys and accepted coin information
+  store_owner_public_key = own_public_key();
+  trusted_issuer_public_key = _trusted_issuer_public_key;
+  expected_coin_color = token_type(pad(32, "brick_towers_coin"), token_address);
+}
+
+// Only accepts valid orders from users that are over 21 years old, and are able to pay for the ordered items
+export circuit submit_order(id: Bytes<16>): [] {
+  const order = get_order(id);
+  const identity = get_identity();
+
+  assert identity.signature.pk == trusted_issuer_public_key "The identity is not issued by a trusted issuer";
+  assert identity.subject.id == own_public_key().bytes "Provided identity is not matching the wallet owner";
+  verify_signature(subject_hash(identity.subject), identity.signature);
+  assert order.timestamp - identity.subject.birth_timestamp > 21 * 365 * 24 * 60 * 60 * 1000 "User is not over 21 years old";
+  const order_total = fold((acc, item) => (acc + available_items.lookup(item)) as Uint<32>, 0 as Uint<32>, order.items);
+  assert order_total == order.payment.value "The provided payment amount does not match the order total";
+  receive(disclose(order.payment));
+  assert order.payment.color == expected_coin_color "The provided payment is not tBTC";
+  send_immediate(disclose(order.payment), left<ZswapCoinPublicKey, ContractAddress>(store_owner_public_key), disclose(order.payment.value));
+}

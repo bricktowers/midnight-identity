@@ -1,0 +1,12 @@
+pragma language_version >= 0.14.0;
+
+import CompactStandardLibrary;
+import "../../crypto/Crypto";
+export { CoinInfo }
+export { sign }
+export { verify_signature }
+export { derive_pk }
+export { subject_hash }
+export { Signature }
+export { CredentialSubject }
+export { SignedCredentialSubject }

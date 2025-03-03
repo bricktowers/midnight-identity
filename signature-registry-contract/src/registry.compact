@@ -1,0 +1,12 @@
+pragma language_version >= 0.14.0;
+
+import CompactStandardLibrary;
+export { CurvePoint }
+
+export ledger wallet_public_key: ZswapCoinPublicKey;
+export ledger signing_public_key: CurvePoint;
+
+export circuit register(signing_key: CurvePoint): [] {
+  wallet_public_key = own_public_key();
+  signing_public_key = signing_key;
+}
